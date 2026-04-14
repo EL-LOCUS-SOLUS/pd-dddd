@@ -3,7 +3,9 @@ M.__index = M
 _G.dddd_outlets = _G.dddd_outlets or {}
 
 -- ─────────────────────────────────────
-function M:random_string()
+--- Generates a random hexadecimal identifier used for dddd message routing.
+---@return string id 12-character hexadecimal id.
+function M:_random_string()
 	local res = {}
 	for i = 1, 12 do
 		res[i] = string.format("%x", math.random(0, 15))
@@ -12,7 +14,12 @@ function M:random_string()
 end
 
 -- ─────────────────────────────────────
--- Create a new dddd from pd atoms
+--- Creates a new dddd instance from Pd atoms.
+---
+--- The atom list is converted into a nested Lua table when possible.
+---@param pdobj table Pd object instance owning this dddd.
+---@param atoms table|any Pd atoms or a scalar value.
+---@return table obj New dddd instance.
 function M:new(pdobj, atoms)
 	local obj = setmetatable({}, self)
 	obj.atoms = atoms or {}
@@ -23,7 +30,10 @@ function M:new(pdobj, atoms)
 end
 
 -- ─────────────────────────────────────
--- Create a new dddd from a table
+--- Creates a new dddd instance from an existing Lua table.
+---@param pdobj table Pd object instance owning this dddd.
+---@param t table Source table.
+---@return table obj New dddd instance.
 function M:new_from_table(pdobj, t)
 	local obj = setmetatable({}, self)
 	obj.pdobj = pdobj
@@ -33,23 +43,32 @@ function M:new_from_table(pdobj, t)
 end
 
 -- ─────────────────────────────────────
--- Create a new dddd from a table
+--- Creates a dddd by resolving an id from a Pd atom list.
+---@param pdobj table Pd object instance owning this dddd.
+---@param t table Atom list where the first item is the dddd id.
+---@return table obj Cloned dddd instance referenced by id.
 function M:new_from_atoms(pdobj, t)
 	local id = t[1]
 	return M:new_from_id(pdobj, id)
 end
 
 -- ─────────────────────────────────────
+--- Sets a semantic type tag for this dddd instance.
+---@param typename string Type name to associate with this object.
 function M:set_type(typename)
 	self.type = typename
 end
 
 -- ─────────────────────────────────────
+--- Returns the semantic type tag of this dddd instance.
+---@return string|nil typename Current type tag, if set.
 function M:get_type()
 	return self.type or nil
 end
 
 -- ─────────────────────────────────────
+--- Validates that the provided type matches the stored type.
+---@param typename string Type name to validate.
 function M:assert_type(typename)
 	if typename ~= self.type then
 		self.pdobj:error("[" .. self.pdobj._name .. "] Expected type " .. self.type .. " received type " .. typename)
@@ -58,6 +77,10 @@ function M:assert_type(typename)
 end
 
 -- ─────────────────────────────────────
+--- Creates a dddd clone from a previously emitted dddd outlet id.
+---@param pdobj table Pd object instance owning this dddd.
+---@param id string Outlet id token (for example: <abc123...>).
+---@return table obj Cloned dddd instance.
 function M:new_from_id(pdobj, id)
 	local obj = setmetatable({}, self)
 	obj.atoms = {}
@@ -78,13 +101,18 @@ function M:new_from_id(pdobj, id)
 
 	-- init metadata
 	obj.depth = self:get_depth(obj.table)
-	obj._id = M:random_string()
+	obj._id = M:_random_string()
 	obj.pdobj = pdobj
 
 	return obj
 end
 
 -- ─────────────────────────────────────
+--- Copies a Lua value.
+---
+--- Tables are copied shallowly; nested tables are shared references.
+---@param obj any Value to copy.
+---@return any copy Copied value.
 function M:deep_copy_table(obj)
 	if type(obj) ~= "table" then
 		local copy = obj
@@ -99,6 +127,10 @@ function M:deep_copy_table(obj)
 end
 
 -- ─────────────────────────────────────
+--- Retrieves and clones a dddd from the global outlet table.
+---@param pdobj table Pd object instance owning this dddd.
+---@param id string Outlet id token.
+---@return table cloned Cloned dddd object.
 function M:get_dddd_from_id(pdobj, id)
 	local original = _G.dddd_outlets[id]
 	if not original then
@@ -111,8 +143,10 @@ function M:get_dddd_from_id(pdobj, id)
 end
 
 -- ─────────────────────────────────────
+--- Emits this dddd through a Pd outlet using temporary id indirection.
+---@param i integer Outlet index.
 function M:output(i)
-	local id = M:random_string()
+	local id = M:_random_string()
 	local str = "<" .. id .. ">"
 	_G.dddd_outlets[str] = self
 	pd._outlet(self.pdobj._object, i, "dddd", { str })
@@ -120,6 +154,8 @@ function M:output(i)
 end
 
 -- ─────────────────────────────────────
+--- Computes depth of this instance's internal table.
+---@return integer depth Nesting depth, 0 for non-table values.
 function M:get_table_depth()
 	if type(self.table) ~= "table" then
 		return 0
@@ -135,6 +171,9 @@ function M:get_table_depth()
 end
 
 -- ─────────────────────────────────────
+--- Computes depth of any nested table recursively.
+---@param tbl any Value or nested table.
+---@return integer depth Nesting depth, 0 for non-table values.
 function M:get_depth(tbl)
 	if type(tbl) ~= "table" then
 		return 0
@@ -150,6 +189,9 @@ function M:get_depth(tbl)
 end
 
 -- ─────────────────────────────────────
+--- Parses a parenthesized or bracketed list string into a Lua table.
+---@param str string Serialized nested list.
+---@return table|nil result Parsed table, or nil if format is invalid.
 function M:to_table(str)
 	local list_b = str:match("^%s*(%b[])%s*$")
 	local result
@@ -165,6 +207,11 @@ function M:to_table(str)
 end
 
 -- ─────────────────────────────────────
+--- Converts Pd atoms to an internal Lua table representation.
+---
+--- The bracket style is inferred and stored for later serialization.
+---@param atoms table|any Pd atoms or scalar value.
+---@return table|any parsed Parsed nested table or original scalar.
 function M:table_from_atoms(atoms)
 	local parts = {}
 	if type(atoms) == "table" then
@@ -199,6 +246,9 @@ function M:table_from_atoms(atoms)
 end
 
 -- ─────────────────────────────────────
+--- Prints the current dddd value to the Pd console.
+---
+--- Tables are flattened to a readable nested string form.
 function M:print()
 	if type(self.table) ~= "table" then
 		pd.post(self.table)
@@ -217,6 +267,9 @@ function M:print()
 end
 
 -- ─────────────────────────────────────
+--- Serializes a Lua value/table to a nested dddd string.
+---@param tbl any Value to serialize.
+---@return string serialized String representation using current bracket style.
 function M:to_string(tbl)
 	if type(tbl) ~= "table" then
 		return tostring(tbl)
@@ -240,6 +293,12 @@ function M:to_string(tbl)
 end
 
 -- ─────────────────────────────────────
+--- Detects bracket style used in a serialized list.
+---
+--- Mixed bracket and parenthesis syntax is rejected.
+---@param str string Serialized list string.
+---@return string|nil open Opening delimiter.
+---@return string|nil close Closing delimiter.
 function M:check_brackets(str)
 	local thereis_b = str:find("%[") or str:find("%]")
 	local thereis_p = str:find("%(") or str:find("%)")
@@ -258,6 +317,11 @@ function M:check_brackets(str)
 end
 
 -- ─────────────────────────────────────
+--- Recursively parses a bracketed/parenthesized list fragment.
+---@param str string Serialized list string.
+---@param i integer Current cursor index.
+---@return table result Parsed sublist.
+---@return integer i Cursor index at parse end.
 function M:parse_list(str, i)
 	local result = {}
 	local token = ""
@@ -296,6 +360,8 @@ function M:parse_list(str, i)
 end
 
 -- ─────────────────────────────────────
+--- Returns the internal table reference for this dddd.
+---@return any table_value Current internal value/table.
 function M:get_table()
 	return self.table
 end
