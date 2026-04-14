@@ -24,7 +24,7 @@ end
 
 -- ─────────────────────────────────────
 -- Create a new dddd from a table
-function M:new_fromtable(pdobj, t)
+function M:new_from_table(pdobj, t)
 	local obj = setmetatable({}, self)
 	obj.pdobj = pdobj
 	obj.table = t
@@ -33,17 +33,24 @@ function M:new_fromtable(pdobj, t)
 end
 
 -- ─────────────────────────────────────
-function M:settype(typename)
+-- Create a new dddd from a table
+function M:new_from_atoms(pdobj, t)
+	local id = t[1]
+	return M:new_from_id(pdobj, id)
+end
+
+-- ─────────────────────────────────────
+function M:set_type(typename)
 	self.type = typename
 end
 
 -- ─────────────────────────────────────
-function M:gettype()
+function M:get_type()
 	return self.type or nil
 end
 
 -- ─────────────────────────────────────
-function M:asserttype(typename)
+function M:assert_type(typename)
 	if typename ~= self.type then
 		self.pdobj:error("[" .. self.pdobj._name .. "] Expected type " .. self.type .. " received type " .. typename)
 		error("[" .. self.pdobj._name .. "] Expected type " .. self.type .. " received type " .. typename)
@@ -51,7 +58,7 @@ function M:asserttype(typename)
 end
 
 -- ─────────────────────────────────────
-function M:new_fromid(pdobj, id)
+function M:new_from_id(pdobj, id)
 	local obj = setmetatable({}, self)
 	obj.atoms = {}
 
@@ -92,14 +99,14 @@ function M:deep_copy_table(obj)
 end
 
 -- ─────────────────────────────────────
-function M:get_ddddfromid(pdobj, id)
+function M:get_dddd_from_id(pdobj, id)
 	local original = _G.dddd_outlets[id]
 	if not original then
 		error("dddd with id " .. tostring(id) .. " not found")
 	end
 
 	local cloned_table = M.deep_copy_table(original:get_table())
-	local cloned = M:new_fromtable(pdobj, cloned_table)
+	local cloned = M:new_from_table(pdobj, cloned_table)
 	return cloned
 end
 
@@ -126,6 +133,7 @@ function M:get_table_depth()
 	end
 	return max_depth + 1
 end
+
 -- ─────────────────────────────────────
 function M:get_depth(tbl)
 	if type(tbl) ~= "table" then
