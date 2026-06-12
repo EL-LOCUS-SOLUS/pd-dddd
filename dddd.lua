@@ -227,6 +227,11 @@ function M:get_depth(tbl)
 end
 
 -- ─────────────────────────────────────
+function M:get_table_depth()
+	return self:get_depth(self.table)
+end
+
+-- ─────────────────────────────────────
 --- Parses a parenthesized or bracketed list string into a Lua table.
 ---@param str string Serialized nested list.
 ---@return table|nil result Parsed table, or nil if format is invalid.
