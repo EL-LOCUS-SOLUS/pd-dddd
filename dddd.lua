@@ -14,6 +14,79 @@ function M:_random_string()
 end
 
 -- ─────────────────────────────────────
+--- Recursively parses a bracketed/parenthesized list fragment.
+---@param str string Serialized list string.
+---@param i integer Current cursor index.
+---@return table result Parsed sublist.
+---@return integer i Cursor index at parse end.
+function M:_parse_list(str, i)
+	local result = {}
+	local token = ""
+	i = i + 1
+
+	local char_open, char_close = self:check_brackets(str)
+
+	while i <= #str do
+		local ch = str:sub(i, i)
+
+		if ch == char_open then
+			local sublist
+			sublist, i = self:_parse_list(str, i)
+			table.insert(result, sublist)
+		elseif ch == char_close then
+			if token ~= "" then
+				local num = tonumber(token)
+				table.insert(result, num or token)
+			end
+			return result, i
+		elseif ch == " " or ch == "\t" or ch == "\n" then
+			if token ~= "" then
+				local num = tonumber(token)
+				table.insert(result, num or token)
+				token = ""
+			end
+		else
+			token = token .. ch
+		end
+
+		i = i + 1
+	end
+
+	return result, i
+end
+
+-- ─────────────────────────────────────
+--- Copies a Lua value thoroughly.
+---
+--- Tables are copied deeply; nested tables are recursively cloned to ensure
+--- complete state isolation across Pd's dataflow execution branches.
+---@param obj any Value to copy.
+---@return any copy Copied value with no shared references.
+function M:_deep_copy_table(obj, copies)
+	if type(obj) ~= "table" then
+		return obj
+	end
+
+	copies = copies or {}
+	if copies[obj] then
+		return copies[obj]
+	end
+
+	local copy = {}
+	copies[obj] = copy
+
+	for k, v in pairs(obj) do
+		if type(v) == "table" then
+			copy[k] = self:_deep_copy_table(v, copies)
+		else
+			copy[k] = v
+		end
+	end
+
+	return copy
+end
+
+-- ─────────────────────────────────────
 --- Creates a new dddd instance from Pd atoms.
 ---
 --- The atom list is converted into a nested Lua table when possible.
@@ -53,6 +126,37 @@ function M:new_from_atoms(pdobj, t)
 end
 
 -- ─────────────────────────────────────
+--- Creates a dddd clone from a previously emitted dddd outlet id.
+---@param pdobj table Pd object instance owning this dddd.
+---@param id string Outlet id token (for example: <abc123...>).
+---@return table obj Cloned dddd instance.
+function M:new_from_id(pdobj, id)
+	local obj = setmetatable({}, self)
+	obj.atoms = {}
+
+	local stored = _G.dddd_outlets[id]
+	if stored == nil then
+		error("dddd outlet id " .. tostring(id) .. " not found")
+	end
+
+	local source_table
+	if type(stored) == "table" and type(stored.get_table) == "function" then
+		source_table = stored:get_table()
+	else
+		source_table = stored
+	end
+
+	obj.table = M._deep_copy_table(self, source_table)
+
+	-- init metadata
+	obj.depth = self:get_depth(obj.table)
+	obj._id = M:_random_string()
+	obj.pdobj = pdobj
+
+	return obj
+end
+
+-- ─────────────────────────────────────
 --- Sets a semantic type tag for this dddd instance.
 ---@param typename string Type name to associate with this object.
 function M:set_type(typename)
@@ -77,56 +181,6 @@ function M:assert_type(typename)
 end
 
 -- ─────────────────────────────────────
---- Creates a dddd clone from a previously emitted dddd outlet id.
----@param pdobj table Pd object instance owning this dddd.
----@param id string Outlet id token (for example: <abc123...>).
----@return table obj Cloned dddd instance.
-function M:new_from_id(pdobj, id)
-	local obj = setmetatable({}, self)
-	obj.atoms = {}
-
-	local stored = _G.dddd_outlets[id]
-	if stored == nil then
-		error("dddd outlet id " .. tostring(id) .. " not found")
-	end
-
-	local source_table
-	if type(stored) == "table" and type(stored.get_table) == "function" then
-		source_table = stored:get_table()
-	else
-		source_table = stored
-	end
-
-	obj.table = M.deep_copy_table(self, source_table)
-
-	-- init metadata
-	obj.depth = self:get_depth(obj.table)
-	obj._id = M:_random_string()
-	obj.pdobj = pdobj
-
-	return obj
-end
-
--- ─────────────────────────────────────
---- Copies a Lua value.
----
---- Tables are copied shallowly; nested tables are shared references.
----@param obj any Value to copy.
----@return any copy Copied value.
-function M:deep_copy_table(obj)
-	if type(obj) ~= "table" then
-		local copy = obj
-		return copy
-	else
-		local copy = {}
-		for k, v in pairs(obj) do
-			copy[k] = v
-		end
-		return copy
-	end
-end
-
--- ─────────────────────────────────────
 --- Retrieves and clones a dddd from the global outlet table.
 ---@param pdobj table Pd object instance owning this dddd.
 ---@param id string Outlet id token.
@@ -134,10 +188,11 @@ end
 function M:get_dddd_from_id(pdobj, id)
 	local original = _G.dddd_outlets[id]
 	if not original then
+		self.pdobj:error("[" .. self.pdobj._name .. "] " .. "dddd with id " .. tostring(id) .. " not found")
 		error("dddd with id " .. tostring(id) .. " not found")
 	end
 
-	local cloned_table = M.deep_copy_table(original:get_table())
+	local cloned_table = M._deep_copy_table(original:get_table())
 	local cloned = M:new_from_table(pdobj, cloned_table)
 	return cloned
 end
@@ -151,23 +206,6 @@ function M:output(i)
 	_G.dddd_outlets[str] = self
 	pd._outlet(self.pdobj._object, i, "dddd", { str })
 	_G.dddd_outlets[str] = nil -- clear memory
-end
-
--- ─────────────────────────────────────
---- Computes depth of this instance's internal table.
----@return integer depth Nesting depth, 0 for non-table values.
-function M:get_table_depth()
-	if type(self.table) ~= "table" then
-		return 0
-	end
-	local max_depth = 0
-	for _, v in ipairs(self.table) do
-		local d = self:get_depth(v)
-		if d > max_depth then
-			max_depth = d
-		end
-	end
-	return max_depth + 1
 end
 
 -- ─────────────────────────────────────
@@ -192,16 +230,16 @@ end
 --- Parses a parenthesized or bracketed list string into a Lua table.
 ---@param str string Serialized nested list.
 ---@return table|nil result Parsed table, or nil if format is invalid.
-function M:to_table(str)
+function M:lisplist_to_table(str)
 	local list_b = str:match("^%s*(%b[])%s*$")
 	local result
 	if list_b then
-		result = self:parse_list(list_b, 1)
+		result = self:_parse_list(list_b, 1)
 	end
 
 	local list_p = str:match("^%s*(%b())%s*$")
 	if list_p then
-		result = self:parse_list(list_p, 1)
+		result = self:_parse_list(list_p, 1)
 	end
 	return result
 end
@@ -241,7 +279,7 @@ function M:table_from_atoms(atoms)
 		return
 	end
 
-	self.table = self:to_table(list_str)
+	self.table = self:lisplist_to_table(list_str)
 	return self.table
 end
 
@@ -304,6 +342,7 @@ function M:check_brackets(str)
 	local thereis_p = str:find("%(") or str:find("%)")
 
 	if thereis_b and thereis_p then
+		self.pdobj:error("[" .. self.pdobj._name .. "] " .. "mixed brackets and parenthesis are not allowed")
 		error("mixed brackets and parenthesis are not allowed")
 	elseif not thereis_b and not thereis_p then
 		return "[", "]"
@@ -314,49 +353,6 @@ function M:check_brackets(str)
 	else
 		return nil, nil
 	end
-end
-
--- ─────────────────────────────────────
---- Recursively parses a bracketed/parenthesized list fragment.
----@param str string Serialized list string.
----@param i integer Current cursor index.
----@return table result Parsed sublist.
----@return integer i Cursor index at parse end.
-function M:parse_list(str, i)
-	local result = {}
-	local token = ""
-	i = i + 1
-
-	local char_open, char_close = self:check_brackets(str)
-
-	while i <= #str do
-		local ch = str:sub(i, i)
-
-		if ch == char_open then
-			local sublist
-			sublist, i = self:parse_list(str, i)
-			table.insert(result, sublist)
-		elseif ch == char_close then
-			if token ~= "" then
-				local num = tonumber(token)
-				table.insert(result, num or token)
-				token = ""
-			end
-			return result, i
-		elseif ch == " " or ch == "\t" or ch == "\n" then
-			if token ~= "" then
-				local num = tonumber(token)
-				table.insert(result, num or token)
-				token = ""
-			end
-		else
-			token = token .. ch
-		end
-
-		i = i + 1
-	end
-
-	return result, i
 end
 
 -- ─────────────────────────────────────
