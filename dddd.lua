@@ -306,7 +306,7 @@ function M:print()
 			table.insert(parts, tostring(v))
 		end
 	end
-	pd.post(table.concat(parts, " "))
+	pd.post(self._s_open .. table.concat(parts, " ") .. self._s_close)
 end
 
 -- ─────────────────────────────────────
